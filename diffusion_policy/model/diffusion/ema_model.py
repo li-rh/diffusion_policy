@@ -9,12 +9,12 @@ class EMAModel:
 
     def __init__(
         self,
-        model,
-        update_after_step=0,
-        inv_gamma=1.0,
-        power=2 / 3,
-        min_value=0.0,
-        max_value=0.9999
+        model,  # 原始模型，用于初始化EMA模型
+        update_after_step=0,  # 开始EMA更新的训练步数
+        inv_gamma=1.0,  # EMA热启动的逆乘因子
+        power=2 / 3,  # EMA热启动的指数因子
+        min_value=0.0,  # EMA衰减率的最小值
+        max_value=0.9999  # EMA衰减率的最大值
     ):
         """
         @crowsonkb's notes on EMA Warmup:
@@ -28,61 +28,73 @@ class EMAModel:
             min_value (float): The minimum EMA decay rate. Default: 0.
         """
 
-        self.averaged_model = model
-        self.averaged_model.eval()
-        self.averaged_model.requires_grad_(False)
+        # 初始化EMA模型
+        self.averaged_model = model  # 保存原始模型的副本
+        self.averaged_model.eval()  # 设置为评估模式
+        self.averaged_model.requires_grad_(False)  # 禁用梯度计算
 
-        self.update_after_step = update_after_step
-        self.inv_gamma = inv_gamma
-        self.power = power
-        self.min_value = min_value
-        self.max_value = max_value
+        # 设置EMA参数
+        self.update_after_step = update_after_step  # 开始EMA更新的步数阈值
+        self.inv_gamma = inv_gamma  # 控制EMA热启动速度的参数
+        self.power = power  # 控制EMA热启动曲线的参数
+        self.min_value = min_value  # 衰减率下限
+        self.max_value = max_value  # 衰减率上限
 
-        self.decay = 0.0
-        self.optimization_step = 0
+        # 初始化训练状态
+        self.decay = 0.0  # 当前衰减率
+        self.optimization_step = 0  # 当前优化步数计数器
 
     def get_decay(self, optimization_step):
         """
-        Compute the decay factor for the exponential moving average.
+        计算指数移动平均的衰减因子
+         
+        Args:
+            optimization_step (int): 当前优化步数
+             
+        Returns:
+            float: 计算得到的衰减率，范围在[min_value, max_value]之间
         """
+        # 计算有效步数（减去延迟更新步数）
         step = max(0, optimization_step - self.update_after_step - 1)
+         
+        # 使用热启动公式计算衰减率
         value = 1 - (1 + step / self.inv_gamma) ** -self.power
-
+ 
+        # 如果步数不足，返回0衰减率
         if step <= 0:
             return 0.0
-
+ 
+        # 确保衰减率在[min_value, max_value]范围内
         return max(self.min_value, min(value, self.max_value))
-
+        
     @torch.no_grad()
     def step(self, new_model):
+        """执行一步EMA更新
+        
+        Args:
+            new_model: 当前训练的最新模型，用于更新EMA模型权重
+        """
+        # 计算当前步数的衰减率
         self.decay = self.get_decay(self.optimization_step)
 
-        # old_all_dataptrs = set()
-        # for param in new_model.parameters():
-        #     data_ptr = param.data_ptr()
-        #     if data_ptr != 0:
-        #         old_all_dataptrs.add(data_ptr)
-
-        all_dataptrs = set()
+        # 遍历模型的所有模块和参数
         for module, ema_module in zip(new_model.modules(), self.averaged_model.modules()):            
             for param, ema_param in zip(module.parameters(recurse=False), ema_module.parameters(recurse=False)):
-                # iterative over immediate parameters only.
+                # 仅处理直接参数，不递归处理子模块
                 if isinstance(param, dict):
                     raise RuntimeError('Dict parameter not supported')
                 
-                # data_ptr = param.data_ptr()
-                # if data_ptr != 0:
-                #     all_dataptrs.add(data_ptr)
-
+                # 处理BatchNorm层参数
                 if isinstance(module, _BatchNorm):
-                    # skip batchnorms
+                    # 直接复制BatchNorm参数，不应用EMA
                     ema_param.copy_(param.to(dtype=ema_param.dtype).data)
                 elif not param.requires_grad:
+                    # 对于不需要梯度的参数，直接复制
                     ema_param.copy_(param.to(dtype=ema_param.dtype).data)
                 else:
+                    # 应用EMA更新公式: ema_param = decay*ema_param + (1-decay)*param
                     ema_param.mul_(self.decay)
                     ema_param.add_(param.data.to(dtype=ema_param.dtype), alpha=1 - self.decay)
 
-        # verify that iterating over module and then parameters is identical to parameters recursively.
-        # assert old_all_dataptrs == all_dataptrs
+        # 更新优化步数计数器
         self.optimization_step += 1

@@ -115,13 +115,17 @@ training:
   tqdm_interval_sec: 1.0
 
 logging:
-  project: diffusion_policy_debug
-  resume: True
-  mode: online
-  name: ${now:%Y.%m.%d-%H.%M.%S}_${name}_${task_name}
-  tags: ["${name}", "${task_name}", "${exp_name}"]
-  id: null
-  group: null
+  project: diffusion_policy_debug  # 指定wandb项目名称，用于归类实验
+  resume: True  # 允许恢复中断的实验运行
+  mode: online  # 在线模式(同步到wandb服务器)，可选offline(离线模式)
+  name: ${now:%Y.%m.%d-%H.%M.%S}_${name}_${task_name}  # 运行名称格式:
+      # ${now}: 当前时间戳(格式:年.月.日-时.分.秒)
+      # ${name}: 实验名称变量 
+      # ${task_name}: 任务名称变量
+  tags: ["${name}", "${task_name}", "${exp_name}"]  # 为运行添加标签:
+      # 便于后续筛选和分类实验
+  id: null  # 运行ID(自动生成)，设为null让wandb自动分配
+  group: null  # 实验分组(用于比较相关实验)，null表示不分组
 
 checkpoint:
   topk:

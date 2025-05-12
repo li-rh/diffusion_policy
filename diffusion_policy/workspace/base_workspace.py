@@ -21,10 +21,14 @@ class BaseWorkspace:
 
     @property
     def output_dir(self):
-        output_dir = self._output_dir
-        if output_dir is None:
-            output_dir = HydraConfig.get().runtime.output_dir
-        return output_dir
+        """获取输出目录路径属性
+        
+        如果未显式设置_output_dir，则从Hydra配置中获取默认输出目录
+        """
+        output_dir = self._output_dir  # 获取实例存储的输出目录
+        if output_dir is None:  # 如果未显式设置
+            output_dir = HydraConfig.get().runtime.output_dir  # 从Hydra运行时配置获取
+        return output_dir  # 返回确定的输出目录路径
     
     def run(self):
         """

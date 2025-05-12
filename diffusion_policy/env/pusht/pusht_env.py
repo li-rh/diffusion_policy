@@ -85,24 +85,48 @@ class PushTEnv(gym.Env):
         self.reset_to_state = reset_to_state
     
     def reset(self):
+        """重置环境到初始状态
+        
+        步骤:
+            1. 使用当前种子初始化环境
+            2. 设置方块重心和阻尼(如果提供了参数)
+            3. 生成或使用指定的初始状态
+            4. 将环境设置为该状态
+            5. 返回初始观测值
+            
+        返回:
+            observation: 初始状态的观测值
+            包含以下信息:
+                - 智能体的x,y位置坐标
+                - 方块的x,y位置坐标
+                - 方块的旋转角度(归一化到[0, 2π]范围内)
+        """
         seed = self._seed
-        self._setup()
+        self._setup()  # 初始化物理环境
+        
+        # 如果提供了方块重心参数，则设置
         if self.block_cog is not None:
             self.block.center_of_gravity = self.block_cog
+            
+        # 如果提供了阻尼参数，则设置    
         if self.damping is not None:
             self.space.damping = self.damping
         
-        # use legacy RandomState for compatibility
+        # 使用legacy RandomState保持兼容性
         state = self.reset_to_state
         if state is None:
+            # 随机生成初始状态
             rs = np.random.RandomState(seed=seed)
             state = np.array([
-                rs.randint(50, 450), rs.randint(50, 450),
-                rs.randint(100, 400), rs.randint(100, 400),
-                rs.randn() * 2 * np.pi - np.pi
+                rs.randint(50, 450), rs.randint(50, 450),  # 智能体初始位置(x,y)
+                rs.randint(100, 400), rs.randint(100, 400),  # 方块初始位置(x,y)
+                rs.randn() * 2 * np.pi - np.pi  # 方块初始角度(-π到π之间)
                 ])
+                
+        # 将环境设置为指定状态
         self._set_state(state)
 
+        # 获取并返回初始观测值
         observation = self._get_obs()
         return observation
 
@@ -138,20 +162,62 @@ class PushTEnv(gym.Env):
         return observation, reward, done, info
 
     def render(self, mode):
+        """渲染当前环境状态
+        
+        参数:
+            mode: 渲染模式，支持以下两种:
+                - "human": 在pygame窗口中实时渲染
+            
+        返回:
+            根据mode参数返回:
+                - "human"模式: 每次调用都会返回当前画面
+        """
         return self._render_frame(mode)
 
     def teleop_agent(self):
+        """Creates a teleoperation agent that can be controlled with mouse input.
+
+        Returns:
+            A named tuple with a single 'act' method that processes mouse input.
+        """
+        
+        # Define a simple named tuple to hold the act function
         TeleopAgent = collections.namedtuple('TeleopAgent', ['act'])
+        
         def act(obs):
+            """Process mouse input to control the agent.
+            
+            Args:
+                obs: Observation (unused in this implementation)
+                
+            Returns:
+                The target position for the agent if teleop is active, None otherwise
+            """
             act = None
+            # Convert mouse position from pygame screen coordinates to pymunk world coordinates
             mouse_position = pymunk.pygame_util.from_pygame(Vec2d(*pygame.mouse.get_pos()), self.screen)
+            
+            # Enable teleop if either:
+            # 1. Teleop was already active (self.teleop is True), or
+            # 2. Mouse is within 30 units of the agent
             if self.teleop or (mouse_position - self.agent.position).length < 30:
                 self.teleop = True
                 act = mouse_position
+                
             return act
+            
         return TeleopAgent(act)
 
     def _get_obs(self):
+        """获取当前环境的观测值
+        
+        返回:
+            obs是np.ndarray
+            包含以下信息:
+                - 智能体的x,y位置坐标
+                - 方块的x,y位置坐标
+                - 方块的旋转角度(归一化到[0, 2π]范围内)
+        """
         obs = np.array(
             tuple(self.agent.position) \
             + tuple(self.block.position) \
@@ -169,14 +235,31 @@ class PushTEnv(gym.Env):
         return body
     
     def _get_info(self):
+        """获取环境当前状态的额外信息
+        
+        返回:
+            dict: 包含以下信息的字典:
+                - pos_agent: 智能体的当前位置(x,y坐标)
+                - vel_agent: 智能体的当前速度(vx,vy分量) 
+                - block_pose: 方块的当前位姿(x,y坐标和角度)
+                - goal_pose: 方块的目标位姿(x,y坐标和角度)
+                - n_contacts: 每个控制步骤中的平均接触点数
+                
+        """
+        # 计算每个控制周期内的物理模拟步数
         n_steps = self.sim_hz // self.control_hz
+        
+        # 计算每个控制步骤的平均接触点数(向上取整)
         n_contact_points_per_step = int(np.ceil(self.n_contact_points / n_steps))
+        
+        # 打包所有信息到字典中
         info = {
             'pos_agent': np.array(self.agent.position),
             'vel_agent': np.array(self.agent.velocity),
             'block_pose': np.array(list(self.block.position) + [self.block.angle]),
             'goal_pose': self.goal_pose,
             'n_contacts': n_contact_points_per_step}
+            
         return info
 
     def _render_frame(self, mode):

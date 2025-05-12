@@ -71,6 +71,7 @@ class TrainDiffusionTransformerLowdimWorkspace(BaseWorkspace):
 
         # configure dataset
         dataset: BaseLowdimDataset
+        # 根据配置文件中的task.dataset字段创建数据集对象，数据集对象类也在配置文件中的_target_指定
         dataset = hydra.utils.instantiate(cfg.task.dataset)
         assert isinstance(dataset, BaseLowdimDataset)
         train_dataloader = DataLoader(dataset, **cfg.dataloader)
@@ -84,7 +85,7 @@ class TrainDiffusionTransformerLowdimWorkspace(BaseWorkspace):
         if cfg.training.use_ema:
             self.ema_model.set_normalizer(normalizer)
 
-        # configure lr scheduler
+        # 配置学习率调度器
         lr_scheduler = get_scheduler(
             cfg.training.lr_scheduler,
             optimizer=self.optimizer,
@@ -92,9 +93,9 @@ class TrainDiffusionTransformerLowdimWorkspace(BaseWorkspace):
             num_training_steps=(
                 len(train_dataloader) * cfg.training.num_epochs) \
                     // cfg.training.gradient_accumulate_every,
-            # pytorch assumes stepping LRScheduler every epoch
-            # however huggingface diffusers steps it every batch
-            last_epoch=self.global_step-1
+            # 注释说明PyTorch和HuggingFace Diffusers在调度器步进方式上的差异
+            # PyTorch默认每个epoch步进一次，而Diffusers每个batch步进一次
+            last_epoch=self.global_step-1 
         )
 
         # configure ema
@@ -111,29 +112,34 @@ class TrainDiffusionTransformerLowdimWorkspace(BaseWorkspace):
             output_dir=self.output_dir)
         assert isinstance(env_runner, BaseLowdimRunner)
 
-        # configure logging
+        # 配置日志记录 - 初始化wandb运行
         wandb_run = wandb.init(
-            dir=str(self.output_dir),
-            config=OmegaConf.to_container(cfg, resolve=True),
-            **cfg.logging
+            dir=str(self.output_dir),  # 设置wandb日志保存目录
+            config=OmegaConf.to_container(cfg, resolve=True),  # 将配置转换为字典并解析所有变量
+            **cfg.logging  # 传入日志配置参数(如项目名、运行名等)
         )
+        # 更新wandb配置，添加输出目录信息
         wandb.config.update(
             {
-                "output_dir": self.output_dir,
+                "output_dir": self.output_dir,  # 记录模型输出目录
             }
         )
 
         # configure checkpoint
+        # 配置TopK检查点管理器，用于保存训练过程中表现最好的K个模型
         topk_manager = TopKCheckpointManager(
-            save_dir=os.path.join(self.output_dir, 'checkpoints'),
-            **cfg.checkpoint.topk
+            save_dir=os.path.join(self.output_dir, 'checkpoints'),  # 检查点保存路径
+            **cfg.checkpoint.topk  # 从配置中获取topk相关参数(监控指标、保存数量等)
         )
 
         # device transfer
+        # 获取训练设备，通常是GPU或CPU
         device = torch.device(cfg.training.device)
         self.model.to(device)
         if self.ema_model is not None:
             self.ema_model.to(device)
+        # 将优化器的参数转移到指定设备上，通常用于分布式训练
+        # 这行代码确保优化器的状态也被转移到正确的设备上，以确保在训练过程中参数和优化器状态保持一致
         optimizer_to(self.optimizer, device)
 
         # save batch for sampling
@@ -151,10 +157,14 @@ class TrainDiffusionTransformerLowdimWorkspace(BaseWorkspace):
         # training loop
         log_path = os.path.join(self.output_dir, 'logs.json.txt')
         with JsonLogger(log_path) as json_logger:
+            # 每个epoch都对同一个训练数据进行采样训练
             for local_epoch_idx in range(cfg.training.num_epochs):
                 step_log = dict()
                 # ========= train for this epoch ==========
                 train_losses = list()
+
+                # 使用tqdm显示训练进度条，描述为"Training epoch {self.epoch}"，
+                # 每次更新进度条时刷新显示，最小间隔为cfg.training.tqdm_interval_sec秒
                 with tqdm.tqdm(train_dataloader, desc=f"Training epoch {self.epoch}", 
                         leave=False, mininterval=cfg.training.tqdm_interval_sec) as tepoch:
                     for batch_idx, batch in enumerate(tepoch):
@@ -196,6 +206,7 @@ class TrainDiffusionTransformerLowdimWorkspace(BaseWorkspace):
                             json_logger.log(step_log)
                             self.global_step += 1
 
+                        # 判断是否达到最大训练步数
                         if (cfg.training.max_train_steps is not None) \
                             and batch_idx >= (cfg.training.max_train_steps-1):
                             break
@@ -206,6 +217,8 @@ class TrainDiffusionTransformerLowdimWorkspace(BaseWorkspace):
                 step_log['train_loss'] = train_loss
 
                 # ========= eval for this epoch ==========
+                # 判断使用哪个模型进行评估
+                # 如果cfg.training.use_ema为True，则使用ema_model进行评估，否则使用model
                 policy = self.model
                 if cfg.training.use_ema:
                     policy = self.ema_model
@@ -235,15 +248,20 @@ class TrainDiffusionTransformerLowdimWorkspace(BaseWorkspace):
                             # log epoch average validation loss
                             step_log['val_loss'] = val_loss
             
-                # run diffusion sampling on a training batch
+                # 运行扩散采样
+                # 这个是对训练集进行采样，然后评估采样结果和真实动作步的MSE误差
                 if (self.epoch % cfg.training.sample_every) == 0:
                     with torch.no_grad():
                         # sample trajectory from training set, and evaluate difference
+                        # 将训练集的采样批次转移到指定设备上，通常是GPU或CPU
                         batch = dict_apply(train_sampling_batch, lambda x: x.to(device, non_blocking=True))
                         obs_dict = {'obs': batch['obs']}
                         gt_action = batch['action']
-                        
+
+                        # 使用策略（diffusion）模型进行预测
                         result = policy.predict_action(obs_dict)
+                        # 是否是只预测动作步，因为会预测 观察内容 + 动作步 的预测结果
+                        # 如果是，只使用动作步的预测结果和真实动作步进行比较
                         if cfg.pred_action_steps_only:
                             pred_action = result['action']
                             start = cfg.n_obs_steps - 1
@@ -251,6 +269,7 @@ class TrainDiffusionTransformerLowdimWorkspace(BaseWorkspace):
                             gt_action = gt_action[:,start:end]
                         else:
                             pred_action = result['action_pred']
+                        # 计算动作步的MSE误差
                         mse = torch.nn.functional.mse_loss(pred_action, gt_action)
                         step_log['train_action_mse_error'] = mse.item()
                         del batch
@@ -260,7 +279,7 @@ class TrainDiffusionTransformerLowdimWorkspace(BaseWorkspace):
                         del pred_action
                         del mse
 
-                # checkpoint
+                # 根据配置文件中的checkpoint_every来定时保存checkpoint
                 if (self.epoch % cfg.training.checkpoint_every) == 0:
                     # checkpointing
                     if cfg.checkpoint.save_last_ckpt:
@@ -281,6 +300,8 @@ class TrainDiffusionTransformerLowdimWorkspace(BaseWorkspace):
 
                     if topk_ckpt_path is not None:
                         self.save_checkpoint(path=topk_ckpt_path)
+
+                
                 # ========= eval end for this epoch ==========
                 policy.train()
 

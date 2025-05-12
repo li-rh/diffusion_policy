@@ -51,7 +51,7 @@ class PymunkKeypointManager:
 
     @classmethod
     def create_from_pusht_env(cls, env, n_block_kps=9, n_agent_kps=3, seed=0, **kwargs):
-        rng = np.random.default_rng(seed=seed)
+        rng = np.random.default_rng(seed=seed) # 定义一个随机数生成器
         local_keypoint_map = dict()
         for name in ['block','agent']:
             self = env

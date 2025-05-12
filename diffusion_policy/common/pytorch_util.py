@@ -75,8 +75,17 @@ def replace_submodules(
     return root_module
 
 def optimizer_to(optimizer, device):
-    for state in optimizer.state.values():
+    """将优化器状态转移到指定设备
+    
+    Args:
+        optimizer: 待转移的优化器实例
+        device: 目标设备(如'cuda:0'或'torch.device对象')
+    
+    Returns:
+        状态已转移到目标设备的优化器实例
+    """
+    for state in optimizer.state.values():  # 遍历优化器所有参数状态
         for k, v in state.items():
-            if isinstance(v, torch.Tensor):
-                state[k] = v.to(device=device)
+            if isinstance(v, torch.Tensor):  # 只处理Tensor类型的状态
+                state[k] = v.to(device=device)  # 转移到目标设备
     return optimizer

@@ -24,7 +24,10 @@ env_runner:
   n_envs: null
 
 dataset:
+  # _target_指定实例化的类
+  # 这里是pusht_dataset.PushTLowdimDataset
   _target_: diffusion_policy.dataset.pusht_dataset.PushTLowdimDataset
+  # 下面这些参数都是PushTLowdimDataset的参数
   zarr_path: data/pusht/pusht_cchi_v7_replay.zarr
   horizon: ${horizon}
   pad_before: ${eval:'${n_obs_steps}-1+${n_latency_steps}'}

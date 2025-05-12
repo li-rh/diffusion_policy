@@ -10,6 +10,11 @@ class BaseLowdimDataset(torch.utils.data.Dataset):
         return BaseLowdimDataset()
 
     def get_normalizer(self, **kwargs) -> LinearNormalizer:
+        """
+        返回一个线性归一化器，用于对数据进行归一化。
+        这个方法应该在数据集加载后调用，以确保数据的归一化是基于整个数据集的统计信息。
+        这个方法应该返回一个LinearNormalizer对象，它可以用于对数据进行归一化。
+        """
         raise NotImplementedError()
 
     def get_all_actions(self) -> torch.Tensor:
